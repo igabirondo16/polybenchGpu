@@ -1,9 +1,15 @@
-OpenCL_SDK=/global/homes/s/sgrauerg/NVIDIA_GPU_Computing_SDK
-INCLUDE=-I${OpenCL_SDK}/OpenCL/common/inc -I../../common
-LIBPATH=-L${OpenCL_SDK}/OpenCL/common/lib -L${OpenCL_SDK}/shared/lib
-LIB=-lOpenCL -lm
-all:
-	gcc -O3 ${INCLUDE} ${LIBPATH} ${LIB} ${CFILES} -o ${EXECUTABLE}
+INCLUDE := -I/usr/include
+LIBPATH := -L/lib/x86_64-linux-gnu
+LIB     := -lOpenCL -lm
 
+# You must define these
+#CFILES := main.c            # Change this to your source files
+#EXECUTABLE := my_opencl_app # Change this to your desired output name
+
+# Build rule
+all:
+	@gcc -O3 $(INCLUDE) $(LIBPATH) $(CFILES) -o $(EXECUTABLE) $(LIB)
+
+# Clean rule
 clean:
-	rm -f *~ *.exe
+	@rm -f *~ *.exe *.o $(EXECUTABLE)
