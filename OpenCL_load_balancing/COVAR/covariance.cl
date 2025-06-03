@@ -51,17 +51,33 @@ __kernel void covar_kernel(__global DATA_TYPE *symmat, __global DATA_TYPE *data,
 	int j1 = get_global_id(0);
 	int i, j2;
 
-	if (j1 < m)
+	if (j1 < m) // Iterate over columns j1 (features)
 	{
-		for (j2 = j1; j2 < m; j2++)
+		for (j2 = j1; j2 < m; j2++) // Iterate over columns j2 (features), starting from j1
 		{		
-	      		symmat[j1*m + j2] = 0.0;
-			for(i = 0; i < n; i++)
+			DATA_TYPE sum = 0.0f; // Use DATA_TYPE for sum
+			for(i = 0; i < n; i++) // Iterate over data points (rows)
 			{
-				symmat[j1 * m + j2] += data[i * m + j1] * data[i * m + j2];
+				// Access data as data[row_idx * num_cols + col_idx]
+				// num_cols is m (M_features)
+				// So, data[i * m + j1] and data[i * m + j2]
+				sum += data[i * m + j1] * data[i * m + j2];
 			}
+
+            // Perform normalization
+            if (n > 1)
+            {
+			    symmat[j1 * m + j2] = sum / (n - 1.0f);
+            }
+            else
+            {
+                symmat[j1 * m + j2] = sum; // Or 0.0f, if n=1 covariance is just the sum (product) or undefined.
+                                          // C code implies it calculates sum/(0.0) if n=1.
+                                          // This path (n=1) is unlikely for typical datasets.
+            }
+
+            // Assign to the symmetric element
 			symmat[j2 * m + j1] = symmat[j1 * m + j2];
 		}
 	}
 }
-
