@@ -399,15 +399,17 @@ int main(int argc, char *argv[])
 	// Alpha (alpha_gpu_share) defines the proportion of work done by the GPU.
 	// GPU handles the first 'alpha_gpu_share * total_elements'
 	// CPU handles the remaining '(1 - alpha_gpu_share) * total_elements'
-	double alpha_gpu_share = 0.5; // Default alpha: 50% for GPU, 50% for CPU
+	double alpha_cpu_share = 0.5; // Default alpha: 50% for GPU, 50% for CPU
 	if (argc > 1) {
-	alpha_gpu_share = atof(argv[1]);
-	if (alpha_gpu_share < 0.0 || alpha_gpu_share > 1.0) {
-		fprintf(stderr, "Alpha (GPU share) must be between 0.0 and 1.0\n");
-		return 1;
-	}
+		alpha_cpu_share = atof(argv[1]);
+		if (alpha_cpu_share < 0.0 || alpha_cpu_share > 1.0) {
+			fprintf(stderr, "Alpha (CPU share) must be between 0.0 and 1.0\n");
+			return 1;
+		}
 	}
 
+
+	double alpha_gpu_share = 1.0f - alpha_cpu_share;
 	// Calculate split points based on alpha_gpu_share
 	// For Kernel 1 (bicgKernel1: q = A * p, computation over NX elements of q)
 	// GPU computes the first 'gpu_elements_q' elements of q.
@@ -424,7 +426,7 @@ int main(int argc, char *argv[])
 	int cpu_elements_s = ny - gpu_elements_s;
 
 	printf("BICG Benchmark with CPU-GPU Collaboration\n");
-	printf("Alpha (GPU Share): %.2f\n", alpha_gpu_share);
+	printf("Alpha (CPU Share): %.2f\n", alpha_cpu_share);
 	printf("NX: %d, NY: %d\n\n", nx, ny);
 
 	printf("Kernel 1 (q = A * p, dimension NX = %d):\n", nx);
@@ -491,9 +493,21 @@ int main(int argc, char *argv[])
 	clFinish(clCommandQue); // Synchronize after Kernel 2 and its data transfers
 
 	/* Stop and print timer. */
-	printf("CPU-GPU Combined Execution Time in seconds:\n");
+	printf("\nCPU-GPU Time in seconds: ");
 	polybench_stop_instruments;
 	polybench_print_instruments;
+
+	size_t a_size = sizeof(DATA_TYPE) * NX * NY;
+	size_t other_buffers = 4 * sizeof(DATA_TYPE) * NX;
+	
+	size_t buffer_size = a_size + other_buffers;
+	size_t arg_size = 2*sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 		/* Start timer. */
@@ -506,7 +520,7 @@ int main(int argc, char *argv[])
 		bicg_cpu_full(nx, ny, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(r), POLYBENCH_ARRAY(s_cpu_ref), POLYBENCH_ARRAY(p), POLYBENCH_ARRAY(q_cpu_ref));
 	
 		/* Stop and print timer. */
-		printf("CPU-only Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

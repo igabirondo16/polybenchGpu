@@ -25,6 +25,8 @@
 //select the OpenCL device to use (can be GPU, CPU, or Accelerator such as Intel Xeon Phi)
 #define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_GPU
 
+#define RUN_ON_CPU
+
 #include "gramschmidt.h"
 #include "../../common/polybench.h"
 #include "../../common/polybenchUtilFuncts.h"
@@ -40,9 +42,7 @@
 #pragma OPENCL EXTENSION cl_amd_fp64 : enable
 #endif
 
-
 char str_temp[1024];
- 
 
 cl_platform_id platform_id;
 cl_device_id device_id;   
@@ -69,11 +69,7 @@ FILE *fp;
 char *source_str;
 size_t source_size;
 
-//#define RUN_ON_CPU
-
-// Alpha for workload splitting (0.0 to 1.0 for GPU percentage)
-double alpha_split = 0.5;
-
+#define RUN_ON_CPU
 
 void compareResults(DATA_TYPE POLYBENCH_2D(A,M,N,m,n), DATA_TYPE POLYBENCH_2D(A_outputFromGpu,M,N,m,n))
 {
@@ -467,13 +463,18 @@ void print_array(int m, int n, DATA_TYPE POLYBENCH_2D(A,M,N,m,n))
 
 int main(int argc, char *argv[])
 {	
+    // Alpha for workload splitting (0.0 to 1.0 for GPU percentage)
+    double alpha_cpu_split = 0.5;
+
     if (argc > 1) {
-        alpha_split = atof(argv[1]);
-        if (alpha_split < 0.0 || alpha_split > 1.0) {
+        alpha_cpu_split = atof(argv[1]);
+        if (alpha_cpu_split < 0.0 || alpha_cpu_split > 1.0) {
             fprintf(stderr, "ERROR: Alpha value must be between 0.0 and 1.0.\n");
             return 1;
         }
     }
+
+    double alpha_gpu_split = 1.0f - alpha_cpu_split;
 
 	POLYBENCH_2D_ARRAY_DECL(A,DATA_TYPE,M,N,m,n);
 	POLYBENCH_2D_ARRAY_DECL(A_outputFromGpu,DATA_TYPE,M,N,m,n); // For final GPU output comparison if needed
@@ -505,11 +506,12 @@ int main(int argc, char *argv[])
     int k, j; // Loop iterators
 
     // Calculate row split for M dimension
-    int gpu_m_rows = (int)(m * alpha_split);
+    int gpu_m_rows = (int)(m * alpha_gpu_split);
     int cpu_m_rows = m - gpu_m_rows;
     int cpu_m_start = gpu_m_rows;
 
     printf("M=%d, N=%d\n", m, n);
+    printf("Alpha cpu: %f\n", alpha_cpu_split);
     printf("GPU rows: 0 to %d (%d rows)\n", gpu_m_rows -1, gpu_m_rows);
     printf("CPU rows: %d to %d (%d rows)\n", cpu_m_start, m - 1, cpu_m_rows);
 
@@ -629,15 +631,24 @@ int main(int argc, char *argv[])
         clFinish(clCommandQue); // Finish all ops for column k (all j's processed for this k)
     }
 
-	/* Stop and print timer. */
-	printf("CPU-GPU Combined Time in seconds:\n");
-	polybench_stop_instruments;
-	polybench_print_instruments;
-
     // Read final A matrix from GPU to A_outputFromGpu for comparison
 	errcode = clEnqueueReadBuffer(clCommandQue, a_mem_obj, CL_TRUE, 0, M*N*sizeof(DATA_TYPE), POLYBENCH_ARRAY(A_outputFromGpu), 0, NULL, NULL);
 	if(errcode != CL_SUCCESS) printf("Error in reading final A from GPU to A_outputFromGpu\n");
     clFinish(clCommandQue);
+
+    /* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+	polybench_stop_instruments;
+	polybench_print_instruments;
+
+    size_t buffer_size = 3 * sizeof(DATA_TYPE) * M * N;
+	size_t arg_size = 3*sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 
@@ -648,7 +659,7 @@ int main(int argc, char *argv[])
 		gramschmidt_cpu_full(POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(R_host), POLYBENCH_ARRAY(Q_host));
 	
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 	

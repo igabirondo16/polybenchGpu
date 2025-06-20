@@ -202,7 +202,7 @@ void cl_load_prog()
 	clFinish(clCommandQue);
 }
 
-// GPU launcher for fdtd_kernel1 (updates ey and ex)
+// GPU launcher for fdtd_kernel1 (updates ey)
 void launch_gpu_fdtd_kernel1(int t, int gpu_rows_nx, int total_nx, int total_ny)
 {
     if (gpu_rows_nx <= 0) return;
@@ -240,13 +240,13 @@ void launch_gpu_fdtd_kernel1(int t, int gpu_rows_nx, int total_nx, int total_ny)
     // kernel1: ey[i*ny+j], ex[i*ny+j]. i = get_global_id(1), j = get_global_id(0).
     // It does not take gpu_rows_nx. It assumes i < nx. So globalWorkSize[1] must be gpu_rows_nx.
     // This is what my globalWorkSize calculation does. Arguments 5 & 6 should be total NX, NY.
-    if(errcode != CL_SUCCESS) { printf("Error in setting arguments for Kernel 1 (ey/ex)\n"); return; }
+    if(errcode != CL_SUCCESS) { printf("Error in setting arguments for Kernel 1 (ey)\n"); return; }
 
     errcode = clEnqueueNDRangeKernel(clCommandQue, clKernel1, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
-    if(errcode != CL_SUCCESS) { printf("Error in launching Kernel 1 (ey/ex)\n"); return; }
+    if(errcode != CL_SUCCESS) { printf("Error in launching Kernel 1 (ey)\n"); return; }
 }
 
-// GPU launcher for fdtd_kernel2 (updates hz)
+// GPU launcher for fdtd_kernel2 (updates ex)
 void launch_gpu_fdtd_kernel2(int gpu_rows_nx, int total_nx, int total_ny)
 {
     if (gpu_rows_nx <= 0) return;
@@ -266,6 +266,28 @@ void launch_gpu_fdtd_kernel2(int gpu_rows_nx, int total_nx, int total_ny)
 
     errcode = clEnqueueNDRangeKernel(clCommandQue, clKernel2, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
     if(errcode != CL_SUCCESS) { printf("Error in launching Kernel 2 (hz)\n"); return; }
+}
+
+// GPU launcher for fdtd_kernel3 (updates hz)
+void launch_gpu_fdtd_kernel3(int gpu_rows_nx, int total_nx, int total_ny)
+{
+    if (gpu_rows_nx <= 0) return;
+    size_t localWorkSize[2] = {DIM_LOCAL_WORK_GROUP_X, DIM_LOCAL_WORK_GROUP_Y};
+    size_t globalWorkSize[2] = {
+        (size_t)ceil(((float)total_ny) / ((float)localWorkSize[0])) * localWorkSize[0], // NY extent
+        (size_t)ceil(((float)gpu_rows_nx) / ((float)localWorkSize[1])) * localWorkSize[1]  // NX extent for GPU
+    };
+    // Kernel 3 in fdtd2d.cl: hz[i*ny+j]. i = get_global_id(1), j = get_global_id(0).
+    // Needs total_nx, total_ny as arguments.
+    errcode =  clSetKernelArg(clKernel3, 0, sizeof(cl_mem), (void *)&ex_mem_obj);
+    errcode |= clSetKernelArg(clKernel3, 1, sizeof(cl_mem), (void *)&ey_mem_obj);
+    errcode |= clSetKernelArg(clKernel3, 2, sizeof(cl_mem), (void *)&hz_mem_obj);
+    errcode |= clSetKernelArg(clKernel3, 3, sizeof(int), (void *)&total_nx); // Full NX
+    errcode |= clSetKernelArg(clKernel3, 4, sizeof(int), (void *)&total_ny); // Full NY
+    if(errcode != CL_SUCCESS) { printf("Error in setting arguments for Kernel 3 (hz)\n"); return; }
+
+    errcode = clEnqueueNDRangeKernel(clCommandQue, clKernel3, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
+    if(errcode != CL_SUCCESS) { printf("Error in launching Kernel 3 (hz)\n"); return; }
 }
 
 // Kernel 3 (source injection hz[0][0] = _fict[t]) is handled by CPU after hz sync,
@@ -375,24 +397,62 @@ void print_array(int nx,
   fprintf(stderr, "\n");
 }
 
+void runFdtd(DATA_TYPE POLYBENCH_1D(_fict_,TMAX,tmax), DATA_TYPE POLYBENCH_2D(ex,NX,NY,nx,ny), DATA_TYPE POLYBENCH_2D(ey,NX,NY,nx,ny), DATA_TYPE POLYBENCH_2D(hz,NX,NY,nx,ny))
+{
+	int t, i, j;
+	
+	for(t=0; t < TMAX; t++)  
+	{
+		for (j=0; j < NY; j++)
+		{
+			ey[0][j] = _fict_[t];
+		}
+	
+		for (i = 1; i < NX; i++)
+		{
+       		for (j = 0; j < NY; j++)
+			{
+       			ey[i][j] = ey[i][j] - 0.5*(hz[i][j] - hz[(i-1)][j]);
+        		}
+		}
+
+		for (i = 0; i < NX; i++)
+		{
+       		for (j = 1; j < NY; j++)
+			{
+				ex[i][j] = ex[i][j] - 0.5*(hz[i][j] - hz[i][(j-1)]);
+			}
+		}
+
+		for (i = 0; i < NX-1; i++)
+		{
+			for (j = 0; j < NY-1; j++)
+			{
+				hz[i][j] = hz[i][j] - 0.7*(ex[i][(j+1)] - ex[i][j] + ey[(i+1)][j] - ey[i][j]);
+			}
+		}
+	}
+}
 
 int main(int argc, char *argv[])
 {
-	double alpha_split = 0.5; // Default alpha for workload splitting
+	double alpha_cpu_split = 0.5; // Default alpha for workload splitting
 	if (argc > 1) {
-	alpha_split = atof(argv[1]);
-	if (alpha_split < 0.0 || alpha_split > 1.0) {
-		fprintf(stderr, "Alpha (for splitting) must be between 0.0 and 1.0\n");
-		return 1;
-	}
+		alpha_cpu_split = atof(argv[1]);
+		if (alpha_cpu_split < 0.0 || alpha_cpu_split > 1.0) {
+			fprintf(stderr, "Alpha (for splitting) must be between 0.0 and 1.0\n");
+			return 1;
+		}
 	}
 
+	double alpha_gpu_split = 1.0f - alpha_cpu_split;
+
 	// Calculate work distribution between CPU and GPU for NX dimension
-	int gpu_nx_rows = (int)(NX * alpha_split);
+	int gpu_nx_rows = (int)(NX * alpha_gpu_split);
 	int cpu_nx_rows = NX - gpu_nx_rows;
 	int cpu_row_start = gpu_nx_rows; // CPU starts after GPU rows
 
-	printf("Workload Split Alpha: %f\n", alpha_split);
+	printf("Workload Split Alpha: %f\n", alpha_cpu_split);
 	printf("GPU rows (NX): 0 to %d (%d rows)\n", gpu_nx_rows -1, gpu_nx_rows);
 	printf("CPU rows (NX): %d to %d (%d rows)\n", cpu_row_start, NX - 1, cpu_nx_rows);
 	printf("\n");
@@ -426,6 +486,7 @@ int main(int argc, char *argv[])
 		// GPU part for EY and EX (Kernel 1 in OpenCL updates both)
 		if (gpu_nx_rows > 0) {
 			launch_gpu_fdtd_kernel1(t, gpu_nx_rows, NX, NY);
+			launch_gpu_fdtd_kernel2(gpu_nx_rows, NX, NY);
 		}
 		clFinish(clCommandQue); // Ensure GPU kernel is done
 
@@ -441,52 +502,56 @@ int main(int argc, char *argv[])
 		}
 		clFinish(clCommandQue); // Ensure reads are complete. Host 'ex' and 'ey' are now fully updated.
 
+
 		// Write updated EX and EY from host to device for HZ computation.
         // GPU already has its part correct. CPU part needs to be written if CPU did work.
-        if (cpu_nx_rows > 0) {
+        if (cpu_nx_rows > 0 && gpu_nx_rows > 0) {
+			DATA_TYPE *ex_src_ptr = (DATA_TYPE*)POLYBENCH_ARRAY(ex) + (cpu_row_start * NY);
             errcode = clEnqueueWriteBuffer(clCommandQue, ex_mem_obj, CL_TRUE, cpu_row_start * NY * sizeof(DATA_TYPE),
-                                           cpu_nx_rows * NY * sizeof(DATA_TYPE), &POLYBENCH_ARRAY(ex)[cpu_row_start][0], 0, NULL, NULL);
+                                           cpu_nx_rows * NY * sizeof(DATA_TYPE), ex_src_ptr, 0, NULL, NULL);
             if(errcode != CL_SUCCESS) { printf("Error writing CPU slice of ex to device\n"); return 1;}
 
+
+			DATA_TYPE *ey_src_ptr = (DATA_TYPE*)POLYBENCH_ARRAY(ey) + (cpu_row_start * NY);
             errcode = clEnqueueWriteBuffer(clCommandQue, ey_mem_obj, CL_TRUE, cpu_row_start * NY * sizeof(DATA_TYPE),
-                                           cpu_nx_rows * NY * sizeof(DATA_TYPE), &POLYBENCH_ARRAY(ey)[cpu_row_start][0], 0, NULL, NULL);
+                                           cpu_nx_rows * NY * sizeof(DATA_TYPE), ey_src_ptr, 0, NULL, NULL);
             if(errcode != CL_SUCCESS) { printf("Error writing CPU slice of ey to device\n"); return 1;}
         }
 		clFinish(clCommandQue); // Ensure writes of CPU parts (if any) are complete. Device ex/ey are now fully consistent.
 
-
+    
 		// Step 2: Update HZ field using updated EX and EY
 		// CPU part for HZ
 		if (cpu_nx_rows > 0) {
             // Adjust num_cpu_rows for hz if it would go out of bounds (hz is NX-1 in i)
-            int actual_cpu_hz_rows = (cpu_row_start + cpu_nx_rows > NX -1 && cpu_row_start < NX -1) ? (NX - 1 - cpu_row_start) : cpu_nx_rows;
-             if (cpu_row_start >= NX -1) actual_cpu_hz_rows = 0; // No rows for CPU if start is too high
-
-			if (actual_cpu_hz_rows > 0) {
-				fdtd_cpu_hz_partial(POLYBENCH_ARRAY(hz), POLYBENCH_ARRAY(ex), POLYBENCH_ARRAY(ey), NX, NY, cpu_row_start, actual_cpu_hz_rows);
-			}
+            //int actual_cpu_hz_rows = (cpu_row_start + cpu_nx_rows > NX -1 && cpu_row_start < NX -1) ? (NX - 1 - cpu_row_start) : cpu_nx_rows;
+            // if (cpu_row_start >= NX -1) actual_cpu_hz_rows = 0; // No rows for CPU if start is too high
+//
+			//if (actual_cpu_hz_rows > 0) {
+			fdtd_cpu_hz_partial(POLYBENCH_ARRAY(hz), POLYBENCH_ARRAY(ex), POLYBENCH_ARRAY(ey), NX, NY, cpu_row_start, cpu_nx_rows);
+			//}
 		}
 		// GPU part for HZ (Kernel 2 in OpenCL)
 		if (gpu_nx_rows > 0) {
             // Adjust gpu_nx_rows for HZ kernel if it would cause reading ey[gpu_nx_rows] when gpu_nx_rows == NX
             // The OpenCL kernel for HZ iterates i from 0 to NX-2. So global size for rows should be at most NX-1.
             // If gpu_nx_rows is NX, the effective number of rows processed by hz kernel is NX-1.
-            int gpu_hz_proc_rows = (gpu_nx_rows == NX) ? NX-1 : gpu_nx_rows;
-            if (gpu_hz_proc_rows > 0) { // only launch if there are rows to process for hz
-			launch_gpu_fdtd_kernel2(gpu_hz_proc_rows, NX, NY);
-            }
+            //int gpu_hz_proc_rows = (gpu_nx_rows == NX) ? NX-1 : gpu_nx_rows;
+            //if (gpu_hz_proc_rows > 0) { // only launch if there are rows to process for hz
+			launch_gpu_fdtd_kernel3(gpu_nx_rows, NX, NY);
+            //}
 		}
 		clFinish(clCommandQue); // Ensure GPU kernel is done.
 
 		// Consolidate HZ:
 		// Read GPU-computed portion of HZ to host
 		if (gpu_nx_rows > 0) {
-            int gpu_hz_proc_rows = (gpu_nx_rows == NX) ? NX-1 : gpu_nx_rows;
-            if (gpu_hz_proc_rows > 0) {
+            //int gpu_hz_proc_rows = (gpu_nx_rows == NX) ? NX-1 : gpu_nx_rows;
+            //if (gpu_hz_proc_rows > 0) {
 			// Read hz[0...gpu_hz_proc_rows-1] from GPU
-			errcode = clEnqueueReadBuffer(clCommandQue, hz_mem_obj, CL_TRUE, 0, gpu_hz_proc_rows * NY * sizeof(DATA_TYPE), POLYBENCH_ARRAY(hz), 0, NULL, NULL);
+			errcode = clEnqueueReadBuffer(clCommandQue, hz_mem_obj, CL_TRUE, 0, gpu_nx_rows * NY * sizeof(DATA_TYPE), POLYBENCH_ARRAY(hz), 0, NULL, NULL);
 			if(errcode != CL_SUCCESS) { printf("Error reading hz_mem_obj (GPU part)\n"); return 1;}
-            }
+            //}
 		}
 		clFinish(clCommandQue); // Ensure read is complete. Host 'hz' is now fully updated.
 
@@ -502,22 +567,37 @@ int main(int argc, char *argv[])
              // Note: actual_cpu_hz_rows might be less than cpu_nx_rows due to boundary.
              // We need to be careful about the exact slice of hz that CPU modified.
              // fdtd_cpu_hz_partial modifies from cpu_row_start up to cpu_row_start + actual_cpu_hz_rows -1.
-            int actual_cpu_hz_rows = (cpu_row_start + cpu_nx_rows > NX -1 && cpu_row_start < NX -1) ? (NX - 1 - cpu_row_start) : cpu_nx_rows;
-            if (cpu_row_start >= NX -1) actual_cpu_hz_rows = 0;
+            //int actual_cpu_hz_rows = (cpu_row_start + cpu_nx_rows > NX -1 && cpu_row_start < NX -1) ? (NX - 1 - cpu_row_start) : cpu_nx_rows;
+            //if (cpu_row_start >= NX -1) actual_cpu_hz_rows = 0;
+//
+            //if (actual_cpu_hz_rows > 0) {
+			DATA_TYPE *hz_src_ptr = (DATA_TYPE*)POLYBENCH_ARRAY(hz) + (cpu_row_start * NY);
+			errcode = clEnqueueWriteBuffer(clCommandQue, hz_mem_obj, CL_TRUE, cpu_row_start * NY * sizeof(DATA_TYPE),
+											cpu_nx_rows * NY * sizeof(DATA_TYPE), hz_src_ptr, 0, NULL, NULL);
+			if(errcode != CL_SUCCESS) { printf("Error writing CPU slice of hz to device\n"); return 1;}
+            //}
 
-            if (actual_cpu_hz_rows > 0) {
-                errcode = clEnqueueWriteBuffer(clCommandQue, hz_mem_obj, CL_TRUE, cpu_row_start * NY * sizeof(DATA_TYPE),
-                                               actual_cpu_hz_rows * NY * sizeof(DATA_TYPE), &POLYBENCH_ARRAY(hz)[cpu_row_start][0], 0, NULL, NULL);
-                if(errcode != CL_SUCCESS) { printf("Error writing CPU slice of hz to device\n"); return 1;}
-            }
+			clFinish(clCommandQue);
         }
-		clFinish(clCommandQue); // Ensure write of CPU part (if any) is complete. Device hz is now fully consistent.
+		// // Ensure write of CPU part (if any) is complete. Device hz is now fully consistent.
+		
 	}
 
 	/* Stop and print timer. */
-	printf("CPU-GPU Combined Time in seconds:\n");
+	printf("\nCPU-GPU Time in seconds: ");
 	polybench_stop_instruments;
 	polybench_print_instruments;
+
+	size_t fict_size = sizeof(DATA_TYPE) * TMAX;
+	size_t other_buffers = 3 * sizeof(DATA_TYPE) * NX * NY;
+	size_t buffer_size = fict_size + other_buffers;
+	size_t arg_size = 3*sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	// Read the final hz array from host memory (it's already synced) for comparison or printing
 	// POLYBENCH_2D_ARRAY_DECL(hz_outputFromGpu,DATA_TYPE,NX,NY,nx,ny); is already declared
@@ -544,7 +624,7 @@ int main(int argc, char *argv[])
 
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

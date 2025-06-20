@@ -163,9 +163,6 @@ void cl_launch_kernel(int gpu_num_rows, int ni, int nj, int nk)
 	globalWorkSize[0] = (size_t)ceil(((float)NK) / ((float)DIM_LOCAL_WORK_GROUP_X)) * DIM_LOCAL_WORK_GROUP_X;
 	globalWorkSize[1] = (size_t)ceil(((float)NJ) / ((float)DIM_LOCAL_WORK_GROUP_Y)) * DIM_LOCAL_WORK_GROUP_Y;
 
-	/* Start timer. */
-  	polybench_start_instruments;
-
 	// Set the arguments of the kernel
 	errcode =  clSetKernelArg(clKernel, 0, sizeof(cl_mem), (void *)&a_mem_obj);
 	errcode |= clSetKernelArg(clKernel, 1, sizeof(cl_mem), (void *)&b_mem_obj);
@@ -186,11 +183,6 @@ void cl_launch_kernel(int gpu_num_rows, int ni, int nj, int nk)
 
 	if(errcode != CL_SUCCESS) printf("Error in launching kernel\n");
 	clFinish(clCommandQue);
-
-	/* Stop and print timer. */
-	printf("GPU Time in seconds:\n");
-  	polybench_stop_instruments;
- 	polybench_print_instruments;
 }
 
 
@@ -349,6 +341,9 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
+
 	if (cpu_rows > 0) {
 		printf("Running CPU computation for rows %d to %d...\n", cpu_start, cpu_end);
 		conv3D_partial(cpu_start, cpu_end, ni, nj, nk, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B_outputFromGpu));
@@ -399,11 +394,19 @@ int main(int argc, char *argv[])
 		clFinish(clCommandQue);
 	}
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
 
-	//cl_launch_kernel(ni, nj, nk);
-//
-	//errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, 0, NI * NJ * NK * sizeof(DATA_TYPE), POLYBENCH_ARRAY(B_outputFromGpu), 0, NULL, NULL);
-	//if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
+	size_t arg_size = sizeof(DATA_TYPE) * NI * NJ * NK;
+	size_t buffer_size = sizeof(int) * 3;
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 
@@ -413,7 +416,7 @@ int main(int argc, char *argv[])
 		conv3D(ni, nj, nk, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

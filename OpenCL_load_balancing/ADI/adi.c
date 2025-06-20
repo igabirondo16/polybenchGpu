@@ -7,6 +7,7 @@
  * Web address: http://www.cse.ohio-state.edu/~pouchet/software/polybench/GPU
  */
 
+//#include <iterator>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -22,7 +23,7 @@
 #define POLYBENCH_TIME 1
 
 //select the OpenCL device to use (can be GPU, CPU, or Accelerator such as Intel Xeon Phi)
-#define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_CPU // Changed to CPU for testing
+#define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_GPU // Changed to CPU for testing
 
 // Ensure comparison against reference CPU version is active for testing
 #define RUN_ON_CPU
@@ -471,25 +472,27 @@ int main(int argc, char *argv[])
 	init_array(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1));
 	init_array(POLYBENCH_ARRAY(A2), POLYBENCH_ARRAY(B2), POLYBENCH_ARRAY(X2));
 
-	if (alpha < 1.0) { // Only initialize OpenCL if GPU is doing some work
-		read_cl_file();
-		cl_initialization();
-		cl_mem_init(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1));
-		cl_load_prog();
-	}
-
+	// Only initialize OpenCL if GPU is doing some work
+	read_cl_file();
+	cl_initialization();
+	cl_mem_init(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1));
+	cl_load_prog();
+	
 	int total_rows_k123 = N;
-	int cpu_rows_k123 = (int)(total_rows_k123 * alpha);
+    int cpu_start = (int)((1.0f - alpha) * total_rows_k123);
+	int cpu_end = total_rows_k123;
+
+	int cpu_rows_k123 = cpu_end - cpu_start;
 	int gpu_rows_k123 = total_rows_k123 - cpu_rows_k123;
 
 	int total_cols_k456 = N;
-	int cpu_cols_k456 = (int)(total_cols_k456 * alpha);
+	int cpu_cols_k456 = cpu_end - cpu_start;
 	int gpu_cols_k456 = total_cols_k456 - cpu_cols_k456;
 	
-	// printf("TSTEPS = %d\n", TSTEPS);
-    // printf("N = %d\n", N);
-	// printf("Alpha = %f, K123: GPU rows = %d, CPU rows = %d (start %d)\n", alpha, gpu_rows_k123, cpu_rows_k123, gpu_rows_k123);
-	// printf("Alpha = %f, K456: GPU cols = %d, CPU cols = %d (start %d)\n", alpha, gpu_cols_k456, cpu_cols_k456, gpu_cols_k456);
+	 printf("TSTEPS = %d\n", TSTEPS);
+     printf("N = %d\n", N);
+	 printf("Alpha = %f, K123: GPU rows = %d, CPU rows = %d (start %d)\n", alpha, gpu_rows_k123, cpu_rows_k123, gpu_rows_k123);
+	 printf("Alpha = %f, K456: GPU cols = %d, CPU cols = %d (start %d)\n", alpha, gpu_cols_k456, cpu_cols_k456, gpu_cols_k456);
 
   	polybench_start_instruments;
 
@@ -501,171 +504,181 @@ int main(int argc, char *argv[])
 			cl_launch_kernel1(gpu_rows_k123);
 		}
 		if (cpu_rows_k123 > 0) {
-			adi_cpu_kernel1(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), gpu_rows_k123, total_rows_k123);
-			if (alpha > 0.0 && alpha < 1.0 && gpu_rows_k123 > 0) { // If mixed mode and CPU did work, update GPU
-				size_t offset_bytes = gpu_rows_k123 * N * sizeof(DATA_TYPE);
-                size_t num_bytes = cpu_rows_k123 * N * sizeof(DATA_TYPE);
-                if (num_bytes > 0) {
-                    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, offset_bytes, num_bytes, &X1[gpu_rows_k123][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_FALSE, offset_bytes, num_bytes, &B1[gpu_rows_k123][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-			}
-		}
-		if (gpu_rows_k123 > 0) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+			adi_cpu_kernel1(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), cpu_start, cpu_end);
+			
+        }    
 
+        errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+
+        if (gpu_rows_k123 > 0 && cpu_rows_k123 > 0) {
+            // Write contents from GPU to CPU
+            errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, 0, gpu_rows_k123 * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(X1), 0, NULL, NULL); CL_CHECK(errcode);
+            errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, 0, gpu_rows_k123 * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(B1), 0, NULL, NULL); CL_CHECK(errcode);
+
+            size_t offset = cpu_start * N * sizeof(DATA_TYPE);
+
+            DATA_TYPE *c_ptr = (DATA_TYPE*) POLYBENCH_ARRAY(X1) + (cpu_start * N);
+            DATA_TYPE *b_ptr = (DATA_TYPE*) POLYBENCH_ARRAY(B1) + (cpu_start * N);
+
+            // Write contents from CPU to GPU
+            errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_TRUE, offset, cpu_rows_k123 * N * sizeof(DATA_TYPE), c_ptr, 0, NULL, NULL); CL_CHECK(errcode);
+            errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_TRUE, offset, cpu_rows_k123 * N * sizeof(DATA_TYPE), b_ptr, 0, NULL, NULL); CL_CHECK(errcode);
+        
+            errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+        }
+
+                
 		// Kernel 2
-		if (gpu_rows_k123 > 0) cl_launch_kernel2(gpu_rows_k123);
+		if (gpu_rows_k123 > 0) {
+            cl_launch_kernel2(gpu_rows_k123);
+            
+        } 
 		if (cpu_rows_k123 > 0) {
-			adi_cpu_kernel2(POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), gpu_rows_k123, total_rows_k123);
-			if (alpha > 0.0 && alpha < 1.0 && gpu_rows_k123 > 0) {
-                size_t offset_bytes = gpu_rows_k123 * N * sizeof(DATA_TYPE);
-                size_t num_bytes = cpu_rows_k123 * N * sizeof(DATA_TYPE);
-                 if (num_bytes > 0) {
-                    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, offset_bytes, num_bytes, &X1[gpu_rows_k123][0], 0, NULL, NULL); CL_CHECK(errcode);
-                 }
-			}
+			adi_cpu_kernel2(POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), cpu_start, cpu_end);
+		
 		}
-		if (gpu_rows_k123 > 0) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+        errcode = clFinish(clCommandQue); CL_CHECK(errcode);
 
+        if (gpu_rows_k123 > 0 && cpu_rows_k123 > 0) {
+            // Write contents from GPU to CPU
+            errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, 0, gpu_rows_k123 * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(X1), 0, NULL, NULL); CL_CHECK(errcode);
+
+            size_t offset = cpu_start * N * sizeof(DATA_TYPE);
+            DATA_TYPE *c_ptr = (DATA_TYPE*) POLYBENCH_ARRAY(X1) + (cpu_start * N);
+
+            // Write contents from CPU to GPU
+            errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_TRUE, offset, cpu_rows_k123 * N * sizeof(DATA_TYPE), c_ptr, 0, NULL, NULL); CL_CHECK(errcode);
+            errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+
+        }
 		// Kernel 3
-		if (gpu_rows_k123 > 0) cl_launch_kernel3(gpu_rows_k123);
+		if (gpu_rows_k123 > 0) {
+            cl_launch_kernel3(gpu_rows_k123);
+        
+        }
 		if (cpu_rows_k123 > 0) {
-			adi_cpu_kernel3(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), gpu_rows_k123, total_rows_k123);
-			if (alpha > 0.0 && alpha < 1.0 && gpu_rows_k123 > 0) {
-                size_t offset_bytes = gpu_rows_k123 * N * sizeof(DATA_TYPE);
-                size_t num_bytes = cpu_rows_k123 * N * sizeof(DATA_TYPE);
-                if (num_bytes > 0) {
-				    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, offset_bytes, num_bytes, &X1[gpu_rows_k123][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-			}
+			adi_cpu_kernel3(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), cpu_start, cpu_end);
+			
 		}
-		if (gpu_rows_k123 > 0) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+        errcode = clFinish(clCommandQue); CL_CHECK(errcode);
 
-        // Sync host X1 and B1 from device if GPU processed K1-3 AND CPU will process K4-6 or if alpha=0 for final result
-        if (gpu_rows_k123 > 0 && (cpu_cols_k456 > 0 || alpha == 0.0)) {
-            size_t num_bytes_gpu_part = gpu_rows_k123 * N * sizeof(DATA_TYPE);
-            if (num_bytes_gpu_part > 0) {
-                errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, 0, num_bytes_gpu_part, &X1[0][0], 0, NULL, NULL); CL_CHECK(errcode);
-                errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, 0, num_bytes_gpu_part, &B1[0][0], 0, NULL, NULL); CL_CHECK(errcode);
-            }
+        if (gpu_rows_k123 > 0 && cpu_rows_k123 > 0) {
+            // Write contents from GPU to CPU
+            errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, 0, gpu_rows_k123 * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(X1), 0, NULL, NULL); CL_CHECK(errcode);
+
+            size_t offset = cpu_start * N * sizeof(DATA_TYPE);
+            DATA_TYPE *c_ptr = (DATA_TYPE*) POLYBENCH_ARRAY(X1) + (cpu_start * N);
+
+            // Write contents from CPU to GPU
+            errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_TRUE, offset, cpu_rows_k123 * N * sizeof(DATA_TYPE), c_ptr, 0, NULL, NULL); CL_CHECK(errcode);
+            errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+
         }
 
 		// Kernel 4
 		for (i1 = 1; i1 < N; i1++)
 		{
-			if (gpu_cols_k456 > 0) cl_launch_kernel4(i1, gpu_cols_k456);
+			if (gpu_cols_k456 > 0) {
+                cl_launch_kernel4(i1, gpu_cols_k456);
+
+            }
 			if (cpu_cols_k456 > 0) {
 				adi_cpu_kernel4(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), i1, gpu_cols_k456, total_cols_k456);
-			}
-			if (gpu_cols_k456 > 0) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
-
-            if (gpu_cols_k456 > 0 && cpu_cols_k456 > 0) {
-                size_t read_offset_bytes = i1*N * sizeof(DATA_TYPE);
-				size_t read_num_bytes = gpu_cols_k456 * sizeof(DATA_TYPE);
-                if(read_num_bytes > 0) {
-                    errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &X1[i1][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &B1[i1][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-                size_t write_offset_bytes = (i1*N + gpu_cols_k456) * sizeof(DATA_TYPE);
-                size_t write_num_bytes = cpu_cols_k456 * sizeof(DATA_TYPE);
-                if (write_num_bytes > 0) {
-                    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &X1[i1][gpu_cols_k456], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &B1[i1][gpu_cols_k456], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-			} else if (gpu_cols_k456 > 0) {
-                size_t read_offset_bytes = i1*N * sizeof(DATA_TYPE);
-				size_t read_num_bytes = N * sizeof(DATA_TYPE); // Read whole row if only GPU
-                 if(read_num_bytes > 0) {
-                    errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &X1[i1][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &B1[i1][0], 0, NULL, NULL); CL_CHECK(errcode);
-                 }
-            } else if (cpu_cols_k456 > 0) {
-                size_t write_offset_bytes = i1*N * sizeof(DATA_TYPE);
-                size_t write_num_bytes = N * sizeof(DATA_TYPE);
-                if (write_num_bytes > 0) {
-                    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &X1[i1][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &B1[i1][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
+			
             }
-			if (alpha < 1.0 && (gpu_cols_k456 > 0 || cpu_cols_k456 > 0) ) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+
+			errcode = clFinish(clCommandQue); CL_CHECK(errcode); 
+
+            if (gpu_cols_k456 > 0 && cpu_cols_k456) {
+                size_t row_offset = i1*N * sizeof(DATA_TYPE);
+                size_t col_offset = row_offset + (cpu_start * sizeof(DATA_TYPE));
+                size_t cols_read_bytes = gpu_cols_k456 * sizeof(DATA_TYPE);
+
+                DATA_TYPE * c_col1 = (DATA_TYPE*)POLYBENCH_ARRAY(X1) + (i1*N);
+                DATA_TYPE * b_col1 = (DATA_TYPE*)POLYBENCH_ARRAY(B1) + (i1*N); 
+
+                // Read from GPU to CPU
+                errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, row_offset, cols_read_bytes, c_col1, 0, NULL, NULL); CL_CHECK(errcode);
+                errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, row_offset, cols_read_bytes, b_col1, 0, NULL, NULL); CL_CHECK(errcode);
+
+                // Write from CPU to GPU
+                DATA_TYPE * c_col2 = (DATA_TYPE*)POLYBENCH_ARRAY(X1) + (i1*N) + cpu_start;
+                DATA_TYPE * b_col2 = (DATA_TYPE*)POLYBENCH_ARRAY(B1) + (i1*N) + cpu_start; 
+
+                // Write contents from CPU to GPU
+                errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_TRUE, col_offset, cpu_cols_k456 * sizeof(DATA_TYPE), c_col2, 0, NULL, NULL); CL_CHECK(errcode);
+                errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_TRUE, col_offset, cpu_cols_k456 * sizeof(DATA_TYPE), b_col2, 0, NULL, NULL); CL_CHECK(errcode);
+                errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+
+            }
+
 		}
 
+        
 		// Kernel 5
-		{
-			int i1_k5 = N-1;
-			if (gpu_cols_k456 > 0) cl_launch_kernel5(gpu_cols_k456);
-			if (cpu_cols_k456 > 0) {
-				adi_cpu_kernel5(POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), gpu_cols_k456, total_cols_k456);
-			}
-			if (gpu_cols_k456 > 0) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+        int i1_k5 = N-1;
+        if (gpu_cols_k456 > 0) {
+            cl_launch_kernel5(gpu_cols_k456);
+        
+        }
+        if (cpu_cols_k456 > 0) {
+            adi_cpu_kernel5(POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), gpu_cols_k456, total_cols_k456);
+        
+        }
 
-            if (gpu_cols_k456 > 0 && cpu_cols_k456 > 0) {
-                size_t read_offset_bytes = i1_k5*N * sizeof(DATA_TYPE);
-				size_t read_num_bytes = gpu_cols_k456 * sizeof(DATA_TYPE);
-                if(read_num_bytes > 0) {
-                     errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &X1[i1_k5][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-                size_t write_offset_bytes = (i1_k5*N + gpu_cols_k456) * sizeof(DATA_TYPE);
-                size_t write_num_bytes = cpu_cols_k456 * sizeof(DATA_TYPE);
-                if (write_num_bytes > 0) {
-                     errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &X1[i1_k5][gpu_cols_k456], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-            } else if (gpu_cols_k456 > 0) {
-                size_t read_offset_bytes_k5_gpu = i1_k5*N * sizeof(DATA_TYPE); // Use unique names
-				size_t read_num_bytes_k5_gpu = N * sizeof(DATA_TYPE);
-                if(read_num_bytes_k5_gpu > 0) { // Use unique name
-                    errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, read_offset_bytes_k5_gpu, read_num_bytes_k5_gpu, &X1[i1_k5][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-            } else if (cpu_cols_k456 > 0) {
-                size_t write_offset_bytes_k5_cpu = i1_k5*N * sizeof(DATA_TYPE); // Use unique names
-                size_t write_num_bytes_k5_cpu = N * sizeof(DATA_TYPE);
-                if (write_num_bytes_k5_cpu > 0) { // Use unique name
-                     errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, write_offset_bytes_k5_cpu, write_num_bytes_k5_cpu, &X1[i1_k5][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-            }
-			if (alpha < 1.0 && (gpu_cols_k456 > 0 || cpu_cols_k456 > 0) ) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
-		}
+        errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+
+        if (gpu_cols_k456 > 0 && cpu_cols_k456 > 0) {
+            size_t row_offset = i1_k5*N * sizeof(DATA_TYPE);
+            size_t col_offset = row_offset + (cpu_start * sizeof(DATA_TYPE));
+            size_t cols_read_bytes = gpu_cols_k456 * sizeof(DATA_TYPE);
+
+            DATA_TYPE * c_col1 = (DATA_TYPE*)POLYBENCH_ARRAY(X1) + (i1_k5*N);
+
+            // Read from GPU to CPU
+            errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, row_offset, cols_read_bytes, c_col1, 0, NULL, NULL); CL_CHECK(errcode);
+
+            // Write from CPU to GPU
+            DATA_TYPE * c_col2 = (DATA_TYPE*)POLYBENCH_ARRAY(X1) + (i1_k5*N) + cpu_start;
+
+            // Write contents from CPU to GPU
+            errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_TRUE, col_offset, cpu_cols_k456 * sizeof(DATA_TYPE), c_col2, 0, NULL, NULL); CL_CHECK(errcode);
+            errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+        } 
 		
+        
 		// Kernel 6
 		for (int i1_loop = 0; i1_loop < N-2; i1_loop++)
 		{
 			int actual_row = N-2-i1_loop;
-			if (gpu_cols_k456 > 0) cl_launch_kernel6(i1_loop, gpu_cols_k456);
+			if (gpu_cols_k456 > 0) {
+                cl_launch_kernel6(i1_loop, gpu_cols_k456);
+            
+            }
 			if (cpu_cols_k456 > 0) {
 				adi_cpu_kernel6(POLYBENCH_ARRAY(A1), POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(X1), i1_loop, gpu_cols_k456, total_cols_k456);
 			}
-			if (gpu_cols_k456 > 0) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+			errcode = clFinish(clCommandQue); CL_CHECK(errcode); 
 
             if (gpu_cols_k456 > 0 && cpu_cols_k456 > 0) {
-                size_t read_offset_bytes = actual_row*N * sizeof(DATA_TYPE);
-				size_t read_num_bytes = gpu_cols_k456 * sizeof(DATA_TYPE);
-                if(read_num_bytes > 0) {
-                    errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &X1[actual_row][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &B1[actual_row][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-                size_t write_offset_bytes = (actual_row*N + gpu_cols_k456) * sizeof(DATA_TYPE);
-                size_t write_num_bytes = cpu_cols_k456 * sizeof(DATA_TYPE);
-                if (write_num_bytes > 0) {
-                    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &X1[actual_row][gpu_cols_k456], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &B1[actual_row][gpu_cols_k456], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-            } else if (gpu_cols_k456 > 0) {
-                size_t read_offset_bytes = actual_row*N * sizeof(DATA_TYPE);
-				size_t read_num_bytes = N * sizeof(DATA_TYPE);
-                if(read_num_bytes > 0) {
-                    errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &X1[actual_row][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, read_offset_bytes, read_num_bytes, &B1[actual_row][0], 0, NULL, NULL); CL_CHECK(errcode);
-                }
-            } else if (cpu_cols_k456 > 0) {
-                size_t write_offset_bytes = actual_row*N * sizeof(DATA_TYPE);
-                size_t write_num_bytes = N * sizeof(DATA_TYPE);
-                 if (write_num_bytes > 0) {
-                    errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &X1[actual_row][0], 0, NULL, NULL); CL_CHECK(errcode);
-                    errcode = clEnqueueWriteBuffer(clCommandQue, b_mem_obj, CL_FALSE, write_offset_bytes, write_num_bytes, &B1[actual_row][0], 0, NULL, NULL); CL_CHECK(errcode);
-                 }
-            }
-			if (alpha < 1.0 && (gpu_cols_k456 > 0 || cpu_cols_k456 > 0)) { errcode = clFinish(clCommandQue); CL_CHECK(errcode); }
+                size_t row_offset = actual_row*N * sizeof(DATA_TYPE);
+                size_t col_offset = row_offset + (cpu_start * sizeof(DATA_TYPE));
+                size_t cols_read_bytes = gpu_cols_k456 * sizeof(DATA_TYPE);
+
+                DATA_TYPE * c_col1 = (DATA_TYPE*)POLYBENCH_ARRAY(X1) + (actual_row*N);
+
+                // Read from GPU to CPU
+                errcode = clEnqueueReadBuffer(clCommandQue, c_mem_obj, CL_TRUE, row_offset, cols_read_bytes, c_col1, 0, NULL, NULL); CL_CHECK(errcode);
+
+                // Write from CPU to GPU
+                DATA_TYPE * c_col2 = (DATA_TYPE*)POLYBENCH_ARRAY(X1) + (actual_row*N) + cpu_start;
+
+                // Write contents from CPU to GPU
+                errcode = clEnqueueWriteBuffer(clCommandQue, c_mem_obj, CL_TRUE, col_offset, cpu_cols_k456 * sizeof(DATA_TYPE), c_col2, 0, NULL, NULL); CL_CHECK(errcode);
+                errcode = clFinish(clCommandQue); CL_CHECK(errcode);
+            } 
 		}
+        
 	}	
 	
     if (alpha < 1.0) {
@@ -677,16 +690,22 @@ int main(int argc, char *argv[])
         clFinish(clCommandQue); CL_CHECK(errcode);
     }
 
-
+    printf("\nCPU-GPU Time in seconds: ");
 	polybench_stop_instruments;
 	polybench_print_instruments;
+
+    size_t total_bytes = mem_size_A + mem_size_B + mem_size_C;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 	
 	#ifdef RUN_ON_CPU
 		/* Start timer. */
 	  	polybench_start_instruments;
 		adi_ref(POLYBENCH_ARRAY(A2), POLYBENCH_ARRAY(B2), POLYBENCH_ARRAY(X2));
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 		compareResults(POLYBENCH_ARRAY(B1), POLYBENCH_ARRAY(B2), POLYBENCH_ARRAY(X1), POLYBENCH_ARRAY(X2));

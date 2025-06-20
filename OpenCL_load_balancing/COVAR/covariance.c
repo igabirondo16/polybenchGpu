@@ -24,7 +24,7 @@
 #define POLYBENCH_TIME 1
 
 //select the OpenCL device to use (can be GPU, CPU, or Accelerator such as Intel Xeon Phi)
-#define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_CPU
+#define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_GPU
 
 #include "covariance.h"
 #include "../../common/polybench.h"
@@ -50,7 +50,7 @@ DATA_TYPE float_n; // Will be initialized in main
 DATA_TYPE eps=  0.005;
 
 cl_platform_id platform_id;
-cl_device_id device_id;   
+cl_device_id device_id;
 cl_uint num_devices;
 cl_uint num_platforms;
 cl_int errcode;
@@ -82,7 +82,7 @@ void compareResults(int m, int n, DATA_TYPE POLYBENCH_2D(symmat,M,M,m,m), DATA_T
 			if (percentDiff(symmat[i][j], symmat_outputFromGpu[i][j]) > PERCENT_DIFF_ERROR_THRESHOLD)
 			{
 				fail++;
-			}			
+			}
 		}
 	}
 	printf("Non-Matching CPU-GPU Outputs Beyond Error Threshold of %4.2f Percent: %d\n", PERCENT_DIFF_ERROR_THRESHOLD, fail);
@@ -118,7 +118,7 @@ void init_arrays(int m, int n, DATA_TYPE POLYBENCH_2D(data,M,N,m,n))
 
 
 void cl_initialization()
-{	
+{
 	// Get platform and device information
 	errcode = clGetPlatformIDs(1, &platform_id, &num_platforms);
 	//if(errcode == CL_SUCCESS) printf("number of platforms is %d\n",num_platforms);
@@ -144,12 +144,12 @@ void cl_initialization()
 	//if(errcode == CL_SUCCESS) printf("device name is %s\n",str_temp);
 	//else printf("Error getting device name\n");
 	if(errcode != CL_SUCCESS) printf("Error: clGetDeviceInfo returned %d\n", errcode);
-	
+
 	// Create an OpenCL context
 	clGPUContext = clCreateContext( NULL, 1, &device_id, NULL, NULL, &errcode);
 	//if(errcode != CL_SUCCESS) printf("Error in creating context\n");
 	if(errcode != CL_SUCCESS) printf("Error: clCreateContext returned %d\n", errcode);
- 
+
 	//Create a command-queue
 	clCommandQue = clCreateCommandQueue(clGPUContext, device_id, 0, &errcode);
 	//if(errcode != CL_SUCCESS) printf("Error in creating command queue\n");
@@ -165,7 +165,7 @@ void cl_mem_init(DATA_TYPE POLYBENCH_2D(data,M,N,m,n), DATA_TYPE POLYBENCH_2D(sy
 	if(errcode != CL_SUCCESS) printf("Error: clCreateBuffer (symmat_mem_obj) returned %d\n", errcode);
 	mean_mem_obj = clCreateBuffer(clGPUContext, CL_MEM_READ_WRITE, sizeof(DATA_TYPE) * M, NULL, &errcode);
 	if(errcode != CL_SUCCESS) printf("Error: clCreateBuffer (mean_mem_obj) returned %d\n", errcode);
-		
+
 	//if(errcode != CL_SUCCESS) printf("Error in creating buffers\n"); // This check is redundant due to individual checks
 
 	errcode = clEnqueueWriteBuffer(clCommandQue, data_mem_obj, CL_TRUE, 0, sizeof(DATA_TYPE) * M * N, data, 0, NULL, NULL);
@@ -176,7 +176,7 @@ void cl_mem_init(DATA_TYPE POLYBENCH_2D(data,M,N,m,n), DATA_TYPE POLYBENCH_2D(sy
 	if(errcode != CL_SUCCESS) printf("Error: clEnqueueWriteBuffer (mean_mem_obj) returned %d\n", errcode);
 }
 
- 
+
 void cl_load_prog()
 {
 	// Create a program from the kernel source
@@ -197,7 +197,7 @@ void cl_load_prog()
 		printf("%s\n", log);
 		free(log);
 	}
-		
+
 	// Create the OpenCL kernel
 	clKernel_mean = clCreateKernel(clProgram, "mean_kernel", &errcode);
 	if(errcode != CL_SUCCESS) printf("Error: clCreateKernel (mean_kernel) returned %d\n", errcode);
@@ -208,7 +208,7 @@ void cl_load_prog()
 	clKernel_covar = clCreateKernel(clProgram, "covar_kernel", &errcode);
 	if(errcode != CL_SUCCESS) printf("Error: clCreateKernel (covar_kernel) returned %d\n", errcode);
 
-	clFinish(clCommandQue);	
+	clFinish(clCommandQue);
 }
 
 
@@ -355,6 +355,10 @@ void cl_launch_kernel3_covar(int cpu_features_start, int cpu_features_end, int g
     size_t localWorkSize_Kernel3[2];
     size_t globalWorkSize_Kernel3[2];
 
+	//cpu_features_start = 0;
+	//cpu_features_end = 0;
+	//gpu_features_count = M;
+
     // GPU Part
     if (gpu_features_count > 0)
     {
@@ -419,6 +423,12 @@ void cl_launch_kernel3_covar(int cpu_features_start, int cpu_features_end, int g
         // If there's an overlap or gap, this logic is flawed.
         // Based on typical splits: gpu_features_count = alpha*M; cpu_features_start = gpu_features_count. No overlap.
         // The symmat_arr is now the final combined result.
+
+		for (int j1 = 0; j1 < gpu_features_count; j1++) {
+			for (int j2 = j1+1; j2 < M_features; j2++) {
+				symmat_arr[j2][j1] = symmat_arr[j1][j2];
+			}
+		}
     }
      // No need to write symmat_arr back to device as it's the final output for this sequence.
     errcode = clFinish(clCommandQue);
@@ -537,23 +547,25 @@ void print_array(int M_val, DATA_TYPE POLYBENCH_2D(symmat,M_val,M_val,m,m_cols))
 
 
 int main(int argc, char** argv)
-{	
+{
 	int M_val = M; // M from covariance.h, e.g., #define M 1024
 	int N_val = N; // N from covariance.h, e.g., #define N 1024
 
     float_n = (DATA_TYPE)N_val; // Initialize float_n with N_val
 
-    double alpha = 0.5; // Default alpha value for load balancing
+    double alpha_cpu = 0.5; // Default alpha value for load balancing
     if (argc > 1) {
-        alpha = atof(argv[1]);
+        alpha_cpu = atof(argv[1]);
     }
-    if (alpha < 0.0 || alpha > 1.0) {
-        fprintf(stderr, "INFO: Alpha value %.2f is out of [0.0, 1.0]. Using default 0.5.\n", alpha);
-        alpha = 0.5;
+    if (alpha_cpu < 0.0 || alpha_cpu > 1.0) {
+        fprintf(stderr, "INFO: Alpha value %.2f is out of [0.0, 1.0]. Using default 0.5.\n", alpha_cpu);
+        alpha_cpu = 0.5;
     }
 
+    double alpha_gpu = 1.0f - alpha_cpu;
+
     // Calculate workload splits based on alpha
-    int gpu_M_features_count = (int)(alpha * M_val);
+    int gpu_M_features_count = (int)(alpha_gpu * M_val);
     int cpu_M_features_start = gpu_M_features_count;
     int cpu_M_features_end = M_val;
     if (cpu_M_features_start > M_val) cpu_M_features_start = M_val; // clamp to M_val
@@ -561,7 +573,7 @@ int main(int argc, char** argv)
     if (gpu_M_features_count > M_val ) gpu_M_features_count = M_val;
 
 
-    int gpu_N_datapoints_count = (int)(alpha * N_val);
+    int gpu_N_datapoints_count = (int)(alpha_gpu * N_val);
     int cpu_N_datapoints_start = gpu_N_datapoints_count;
     int cpu_N_datapoints_end = N_val;
     if (cpu_N_datapoints_start > N_val) cpu_N_datapoints_start = N_val; // clamp to N_val
@@ -569,7 +581,7 @@ int main(int argc, char** argv)
     if (gpu_N_datapoints_count > N_val) gpu_N_datapoints_count = N_val;
 
 
-    printf("Selected alpha: %.2f\n", alpha);
+    printf("Selected alpha: %.2f\n", alpha_cpu);
     printf("M_val (features): %d, N_val (datapoints): %d\n", M_val, N_val);
     printf("GPU M features: %d (indices 0 to %d)\n", gpu_M_features_count, (gpu_M_features_count > 0 ? gpu_M_features_count - 1 : -1));
     printf("CPU M features: %d (indices %d to %d)\n", (cpu_M_features_end - cpu_M_features_start), cpu_M_features_start, cpu_M_features_end - 1);
@@ -590,15 +602,13 @@ int main(int argc, char** argv)
     for(int i=0; i<M_val; i++) (*mean)[i] = 0.0; // Initialize mean array
     // symmat_outputFromGpu will be entirely overwritten by collab function
     // symmat (for CPU ref) will be entirely overwritten by covariance function
-    
+
 	read_cl_file(); // source_str is allocated here
 	cl_initialization();
     // cl_mem_init expects M, N order for polybench macros, but sizes are N*M for data, M*M for symmat, M for mean.
     // It uses M and N passed as arguments for sizes.
 	cl_mem_init(POLYBENCH_ARRAY(data), POLYBENCH_ARRAY(symmat_outputFromGpu), POLYBENCH_ARRAY(mean));
 	cl_load_prog();
-
-    printf("\nStarting collaborative covariance calculation...\n");
 	/* Start timer. */
 	polybench_start_instruments;
 
@@ -608,12 +618,23 @@ int main(int argc, char** argv)
                       POLYBENCH_ARRAY(data), POLYBENCH_ARRAY(mean), POLYBENCH_ARRAY(symmat_outputFromGpu));
 
 	/* Stop and print timer. */
-    printf("Collaborative GPU+CPU Time in seconds:\n");
+    printf("\nCPU-GPU Time in seconds: ");
 	polybench_stop_instruments;
 	polybench_print_instruments;
 
+    size_t data_symmat_size = 2 * sizeof(DATA_TYPE) * M * N;
+	size_t mean_size = sizeof(DATA_TYPE) * M;
+	size_t buffer_size = data_symmat_size + mean_size;
+
+	size_t arg_size = sizeof(DATA_TYPE) + sizeof(int) * 2;
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_KERNEL_1_X * DIM_LOCAL_WORK_GROUP_KERNEL_1_Y;
+	printf("Work group size: %ld\n", wg_size);
+
 	#ifdef RUN_ON_CPU
-		printf("\nStarting CPU-only covariance calculation for comparison...\n");
 		// Re-initialize data and mean for a fresh CPU run
 		init_arrays(N_val, M_val, POLYBENCH_ARRAY(data));
         for(int i=0; i<M_val; i++) (*mean)[i] = 0.0;
@@ -622,9 +643,9 @@ int main(int argc, char** argv)
 	  	polybench_start_instruments;
 
 		covariance(M_val, N_val, POLYBENCH_ARRAY(data), POLYBENCH_ARRAY(symmat), POLYBENCH_ARRAY(mean));
-	
+
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 
@@ -638,13 +659,13 @@ int main(int argc, char** argv)
 
 
 	cl_clean_up();
-	
+
 	POLYBENCH_FREE_ARRAY(data);
 	POLYBENCH_FREE_ARRAY(symmat);
 	POLYBENCH_FREE_ARRAY(mean);
-	POLYBENCH_FREE_ARRAY(symmat_outputFromGpu);	
+	POLYBENCH_FREE_ARRAY(symmat_outputFromGpu);
     if (source_str != NULL) free(source_str); // Free memory allocated in read_cl_file
-	
+
 	return 0;
 }
 

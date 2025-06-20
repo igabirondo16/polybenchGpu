@@ -228,9 +228,6 @@ void cl_launch_kernel(int gpu_rows, int ni, int nj, int nk, int nl, DATA_TYPE al
 	globalWorkSize[0] = (size_t)ceil(((float)NI) / ((float)DIM_LOCAL_WORK_GROUP_X)) * DIM_LOCAL_WORK_GROUP_X;
 	globalWorkSize[1] = (size_t)ceil(((float)gpu_rows) / ((float)DIM_LOCAL_WORK_GROUP_Y)) * DIM_LOCAL_WORK_GROUP_Y;
 
-	/* Start timer. */
-  	polybench_start_instruments;
-
 	// Set the arguments of the kernel
 	errcode =  clSetKernelArg(clKernel1, 0, sizeof(cl_mem), (void *)&tmp_mem_obj);
 	errcode |= clSetKernelArg(clKernel1, 1, sizeof(cl_mem), (void *)&a_mem_obj);
@@ -266,10 +263,7 @@ void cl_launch_kernel(int gpu_rows, int ni, int nj, int nk, int nl, DATA_TYPE al
 	if(errcode != CL_SUCCESS) printf("Error in launching kernel\n");
 	clFinish(clCommandQue);
 
-	/* Stop and print timer. */
-	printf("GPU Time in seconds:\n");
-  	polybench_stop_instruments;
- 	polybench_print_instruments;
+	
 }
 
 
@@ -435,6 +429,9 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(tmp), POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C), POLYBENCH_ARRAY(D_outputFromGpu));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
+
 	if (cpu_rows > 0) {
 		printf("Running CPU computation for rows %d to %d...\n", cpu_start, cpu_end);
 		mm2_cpu_partial(cpu_start, cpu_end, ni, nj, nk, nl, alpha, beta, POLYBENCH_ARRAY(tmp), POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C), POLYBENCH_ARRAY(D_outputFromGpu));
@@ -448,6 +445,26 @@ int main(int argc, char *argv[])
 		if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
 	}
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
+
+	size_t tmp_size = sizeof(DATA_TYPE) * NI * NJ;
+	size_t a_size = sizeof(DATA_TYPE) * NI * NK;
+	size_t b_size = sizeof(DATA_TYPE) * NK * NJ;
+	size_t c_size = sizeof(DATA_TYPE) * NL * NJ;
+	size_t output_size = sizeof(DATA_TYPE) * NI * NL;
+	
+	size_t buffer_size = tmp_size + a_size + b_size + c_size + output_size;
+	size_t arg_size = 4*sizeof(int) + 2*sizeof(DATA_TYPE);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
+
 	#ifdef RUN_ON_CPU
 
 		/* Start timer. */
@@ -456,7 +473,7 @@ int main(int argc, char *argv[])
 		mm2_cpu(ni, nj, nk, nl, alpha, beta, POLYBENCH_ARRAY(tmp), POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C), POLYBENCH_ARRAY(D));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

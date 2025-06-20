@@ -205,9 +205,6 @@ void cl_launch_kernel(int gpu_rows, int ni, int nj, int nk, DATA_TYPE alpha, DAT
 	globalWorkSize[0] = (size_t)ceil(((float)NJ) / ((float)DIM_LOCAL_WORK_GROUP_X)) * DIM_LOCAL_WORK_GROUP_X;
 	globalWorkSize[1] = (size_t)ceil(((float)gpu_rows) / ((float)DIM_LOCAL_WORK_GROUP_Y)) * DIM_LOCAL_WORK_GROUP_Y;
 
-	/* Start timer. */
-  	polybench_start_instruments;
-
 	// Set the arguments of the kernel
 	errcode =  clSetKernelArg(clKernel, 0, sizeof(cl_mem), (void *)&a_mem_obj);
 	errcode |= clSetKernelArg(clKernel, 1, sizeof(cl_mem), (void *)&b_mem_obj);
@@ -224,11 +221,6 @@ void cl_launch_kernel(int gpu_rows, int ni, int nj, int nk, DATA_TYPE alpha, DAT
 	errcode = clEnqueueNDRangeKernel(clCommandQue, clKernel, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
 	if(errcode != CL_SUCCESS) printf("Error in launching kernel\n");
 	clFinish(clCommandQue);
-
-	/* Stop and print timer. */
-	printf("GPU Time in seconds:\n");
-  	polybench_stop_instruments;
- 	polybench_print_instruments;
 }
 
 
@@ -345,6 +337,9 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
+
 	if (cpu_rows > 0) {
 		printf("Running CPU computation for rows %d to %d...\n", cpu_start, cpu_end);
 		gemm_partial(cpu_start, cpu_end, ni, nj, nk, alpha, beta, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C_outputFromGpu));
@@ -360,6 +355,24 @@ int main(int argc, char *argv[])
 
 	}
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
+
+	size_t a_size = sizeof(DATA_TYPE) * NI * NK;
+	size_t b_size = sizeof(DATA_TYPE) * NK * NJ;
+	size_t c_size = sizeof(DATA_TYPE) * NI * NJ;
+
+	size_t buffer_size = a_size + b_size + c_size;
+	size_t arg_size = 2*sizeof(float) + 3*sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
+
 	#ifdef RUN_ON_CPU
 
 		/* Start timer. */
@@ -368,7 +381,7 @@ int main(int argc, char *argv[])
 		gemm(ni, nj, nk, alpha, beta, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

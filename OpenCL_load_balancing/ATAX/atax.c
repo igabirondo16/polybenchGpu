@@ -23,7 +23,7 @@
 #define POLYBENCH_TIME 1
 
 //select the OpenCL device to use (can be GPU, CPU, or Accelerator such as Intel Xeon Phi)
-#define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_CPU
+#define OPENCL_DEVICE_SELECTION CL_DEVICE_TYPE_GPU
 
 #define RUN_ON_CPU // Ensure comparison is active
 
@@ -377,7 +377,6 @@ int main(int argc, char *argv[])
 	printf("NX (rows of A, tmp size): %d, NY (cols of A, y size): %d\n", nx, ny);
 	printf("GPU processes first %d rows of A for kernel 1 (tmp calculation).\n", gpu_nx_rows);
 	printf("CPU processes last %d rows of A (from row %d) for kernel 1 (tmp calculation).\n", cpu_nx_rows, cpu_nx_row_start);
-	printf("\n");
 
 	POLYBENCH_2D_ARRAY_DECL(A_host,DATA_TYPE,NX,NY,nx,ny);
 	POLYBENCH_1D_ARRAY_DECL(x_host,DATA_TYPE,NY,ny);
@@ -427,8 +426,22 @@ int main(int argc, char *argv[])
 	}
 
 	polybench_stop_instruments;
-	printf("Total (CPU+GPU) Time in seconds:\n");
+	printf("\nCPU-GPU Time in seconds: ");
     polybench_print_instruments;
+
+	size_t a_size = sizeof(DATA_TYPE) * NX * NY;
+	size_t b_size = sizeof(DATA_TYPE) * NY;
+	size_t y_size = sizeof(DATA_TYPE) * NY;
+	size_t tmp_size = sizeof(DATA_TYPE) * NX;
+
+	size_t buffer_size = a_size + b_size + y_size + tmp_size;
+	size_t arg_size = 2*sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
         POLYBENCH_1D_ARRAY_DECL(tmp_for_ref_cpu,DATA_TYPE,NX,nx);
@@ -437,7 +450,7 @@ int main(int argc, char *argv[])
 	  	polybench_start_instruments;
 		atax_cpu_ref(nx, ny, POLYBENCH_ARRAY(A_host), POLYBENCH_ARRAY(x_host), POLYBENCH_ARRAY(y_ref_cpu), POLYBENCH_ARRAY(tmp_for_ref_cpu));
 		polybench_stop_instruments;
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	 	polybench_print_instruments;
 
 		compareResults(ny, POLYBENCH_ARRAY(y_ref_cpu), POLYBENCH_ARRAY(y_final_combined));

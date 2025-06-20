@@ -17,10 +17,10 @@
 typedef float DATA_TYPE;
 
 
-__kernel void mean_kernel(__global DATA_TYPE *mean, __global DATA_TYPE *data, DATA_TYPE float_n, int m, int n) 
-{    	 
+__kernel void mean_kernel(__global DATA_TYPE *mean, __global DATA_TYPE *data, DATA_TYPE float_n, int m, int n)
+{
 	int j = get_global_id(0);
-	
+
 	if (j < m)
 	{
 		mean[j] = 0.0;
@@ -34,19 +34,19 @@ __kernel void mean_kernel(__global DATA_TYPE *mean, __global DATA_TYPE *data, DA
 	}
 }
 
-__kernel void reduce_kernel(__global DATA_TYPE *mean, __global DATA_TYPE *data, int m, int n) 
+__kernel void reduce_kernel(__global DATA_TYPE *mean, __global DATA_TYPE *data, int m, int n)
 {
-	int j = get_global_id(0);    
+	int j = get_global_id(0);
 	int i = get_global_id(1);
 
 	if ((i < n) && (j < m))
 	{
-		data[i * m + j] -= mean[j];	
+		data[i * m + j] -= mean[j];
 	}
 }
 
 
-__kernel void covar_kernel(__global DATA_TYPE *symmat, __global DATA_TYPE *data, int m, int n) 
+__kernel void covar_kernel(__global DATA_TYPE *symmat, __global DATA_TYPE *data, int m, int n)
 {
 	int j1 = get_global_id(0);
 	int i, j2;
@@ -54,7 +54,7 @@ __kernel void covar_kernel(__global DATA_TYPE *symmat, __global DATA_TYPE *data,
 	if (j1 < m) // Iterate over columns j1 (features)
 	{
 		for (j2 = j1; j2 < m; j2++) // Iterate over columns j2 (features), starting from j1
-		{		
+		{
 			DATA_TYPE sum = 0.0f; // Use DATA_TYPE for sum
 			for(i = 0; i < n; i++) // Iterate over data points (rows)
 			{
@@ -77,7 +77,7 @@ __kernel void covar_kernel(__global DATA_TYPE *symmat, __global DATA_TYPE *data,
             }
 
             // Assign to the symmetric element
-			symmat[j2 * m + j1] = symmat[j1 * m + j2];
+			//symmat[j2 * m + j1] = symmat[j1 * m + j2];
 		}
 	}
 }
