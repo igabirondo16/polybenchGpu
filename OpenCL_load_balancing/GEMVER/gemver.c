@@ -361,9 +361,6 @@ void cl_launch_kernel1(
 		localWorkSize[1] = DIM_LOCAL_WORK_GROUP_KERNEL_1_Y;
 		globalWorkSize[0] = (size_t)ceil(((float)N) / ((float)DIM_LOCAL_WORK_GROUP_KERNEL_1_X)) * DIM_LOCAL_WORK_GROUP_KERNEL_1_X;
 		globalWorkSize[1] = (size_t)ceil(((float)gpu_rows) / ((float)DIM_LOCAL_WORK_GROUP_KERNEL_1_Y)) * DIM_LOCAL_WORK_GROUP_KERNEL_1_Y;
-		
-		/* Start timer. */
-		polybench_start_instruments;
 
 		// Set the arguments of the kernel
 		errcode =  clSetKernelArg(clKernel1, 0, sizeof(cl_mem), (void *)&a_mem_obj);
@@ -583,13 +580,28 @@ int main(int argc, char *argv[])
 		POLYBENCH_ARRAY(v1), POLYBENCH_ARRAY(v2), POLYBENCH_ARRAY(u1), POLYBENCH_ARRAY(u2));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
+
 	gemver_collab(cpu_start, cpu_end, gpu_rows, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(x), POLYBENCH_ARRAY(y), POLYBENCH_ARRAY(z), 
 		POLYBENCH_ARRAY(w_outputFromGpu), POLYBENCH_ARRAY(v1), POLYBENCH_ARRAY(v2), POLYBENCH_ARRAY(u1), POLYBENCH_ARRAY(u2));
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
 
-	//cl_launch_kernel();
-	//errcode = clEnqueueReadBuffer(clCommandQue, w_mem_obj, CL_TRUE, 0, N*sizeof(DATA_TYPE), POLYBENCH_ARRAY(w_outputFromGpu), 0, NULL, NULL);
-	//if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
+	size_t size_b1 = 2 * sizeof(DATA_TYPE) * N * N;
+	size_t size_b2 = 8 * sizeof(DATA_TYPE);
+
+	size_t buffer_size = size_b1 + size_b2;
+	size_t arg_size = sizeof(DATA_TYPE)*2 + sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_KERNEL_1_X * DIM_LOCAL_WORK_GROUP_KERNEL_1_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 
@@ -603,7 +615,7 @@ int main(int argc, char *argv[])
 			POLYBENCH_ARRAY(v1), POLYBENCH_ARRAY(v2), POLYBENCH_ARRAY(u1), POLYBENCH_ARRAY(u2));
 	
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
   		polybench_stop_instruments;
  		polybench_print_instruments;
 

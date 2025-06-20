@@ -375,23 +375,16 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(a), POLYBENCH_ARRAY(b));
 	cl_load_prog();
 
+	/* Start timer. */
+	polybench_start_instruments;
+
 	if (gpu_rows > 0) {
-		printf("Running GPU computation for rows %d to %d...\n", gpu_start, gpu_end);
-
-		/* Start timer. */
-		polybench_start_instruments;
-
 		int t;
 		for (t = 0; t < _PB_TSTEPS ; t++)
 		{
 			cl_launch_kernel1(n, gpu_rows);
 			cl_launch_kernel2(n, gpu_rows);
 		}
-
-		/* Stop and print timer. */
-		printf("GPU Time in seconds:\n");
-		polybench_stop_instruments;
-		polybench_print_instruments;
 
 		errcode = clEnqueueReadBuffer(clCommandQue, a_mem_obj, CL_TRUE, 0, gpu_rows * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(a_outputFromGpu), 0, NULL, NULL);
 		errcode = clEnqueueReadBuffer(clCommandQue, b_mem_obj, CL_TRUE, 0, gpu_rows * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(b_outputFromGpu), 0, NULL, NULL);
@@ -404,6 +397,19 @@ int main(int argc, char *argv[])
 		runJacobi2DCpu_partial(cpu_start, cpu_end, tsteps, n, POLYBENCH_ARRAY(a_outputFromGpu), POLYBENCH_ARRAY(b_outputFromGpu));
 	}
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+	polybench_stop_instruments;
+	polybench_print_instruments;
+
+	size_t buffer_size = 2 * N * N * sizeof(DATA_TYPE);
+	size_t arg_size = sizeof(int);
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
+
 	#ifdef RUN_ON_CPU
 
 		/* Start timer. */
@@ -412,7 +418,7 @@ int main(int argc, char *argv[])
 		runJacobi2DCpu(tsteps, n, POLYBENCH_ARRAY(a), POLYBENCH_ARRAY(b));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

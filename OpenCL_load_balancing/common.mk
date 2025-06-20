@@ -8,6 +8,12 @@ LIB     := -pthread -lOpenCL -lm
 
 # Build rule
 all:
+	@echo "--- Compiling $(EXECUTABLE) ---"
+	@echo "CFILES = $(CFILES)"
+	@echo "INCLUDE = $(INCLUDE)"
+	@echo "LIBPATH = $(LIBPATH)"
+	@echo "LIB = $(LIB)"
+	@echo "Full command: gcc -O3 $(INCLUDE) $(LIBPATH) $(CFILES) -o $(EXECUTABLE) $(LIB)"
 	@gcc -O3 $(INCLUDE) $(LIBPATH) $(CFILES) -o $(EXECUTABLE) $(LIB)
 
 # Clean rule

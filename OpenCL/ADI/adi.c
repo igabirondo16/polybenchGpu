@@ -42,6 +42,8 @@
 #pragma OPENCL EXTENSION cl_amd_fp64 : enable
 #endif
 
+#define RUN_ON_CPU
+
 char str_temp[1024];
 
 

@@ -30,9 +30,14 @@
 #  endif
 
 #  ifdef STANDARD_DATASET /* Default if unspecified. */
-#define M 2048
-#define N 2048
+#define M 32
+#define N 32
 #  endif
+
+//#  ifdef STANDARD_DATASET /* Default if unspecified. */
+//#define M 2048
+//#define N 2048
+//#  endif
 
 #  ifdef LARGE_DATASET
 #define M 2048

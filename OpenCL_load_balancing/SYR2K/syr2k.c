@@ -211,9 +211,6 @@ void cl_launch_kernel(int gpu_rows, int ni, int nj, DATA_TYPE alpha, DATA_TYPE b
 	globalWorkSize[0] = (size_t)ceil(((float)NI) / ((float)DIM_LOCAL_WORK_GROUP_X)) * DIM_LOCAL_WORK_GROUP_X;
 	globalWorkSize[1] = (size_t)ceil(((float)gpu_rows) / ((float)DIM_LOCAL_WORK_GROUP_Y)) * DIM_LOCAL_WORK_GROUP_Y;
 
-	/* Start timer. */
-  	polybench_start_instruments;
-
 	// Set the arguments of the kernel
 	errcode =  clSetKernelArg(clKernel1, 0, sizeof(cl_mem), (void *)&a_mem_obj);
 	errcode =  clSetKernelArg(clKernel1, 1, sizeof(cl_mem), (void *)&b_mem_obj);
@@ -229,11 +226,6 @@ void cl_launch_kernel(int gpu_rows, int ni, int nj, DATA_TYPE alpha, DATA_TYPE b
 	errcode = clEnqueueNDRangeKernel(clCommandQue, clKernel1, 2, NULL, globalWorkSize, localWorkSize, 0, NULL, NULL);
 	if(errcode != CL_SUCCESS) printf("Error in launching kernel1\n");
 	clFinish(clCommandQue);
-
-	/* Stop and print timer. */
-	printf("GPU Time in seconds:\n");
-  	polybench_stop_instruments;
- 	polybench_print_instruments;
 }
 
 void cl_clean_up()
@@ -373,6 +365,9 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
+
 	if (cpu_rows > 0) {
 		printf("Running CPU computation for rows %d to %d...\n", cpu_start, cpu_end);
 		syr2kCpu_partial(cpu_start, cpu_end, ni, nj, alpha, beta, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C_outputFromGpu));
@@ -387,6 +382,23 @@ int main(int argc, char *argv[])
 		if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
 	}
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
+
+	size_t a_b_size = 2 * NI * NJ * sizeof(DATA_TYPE);
+	size_t c_size = NI * NI * sizeof(DATA_TYPE);
+	size_t buffer_size = a_b_size + c_size;
+
+	size_t arg_size = 2*sizeof(DATA_TYPE) + 2*sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
+
 	#ifdef RUN_ON_CPU
 
 		/* Start timer. */
@@ -395,7 +407,7 @@ int main(int argc, char *argv[])
 		syr2kCpu(ni, nj, alpha, beta, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B), POLYBENCH_ARRAY(C));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

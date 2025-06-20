@@ -209,9 +209,6 @@ void cl_launch_kernel(int start_row, int num_rows, int ni, int nj)
 		return;
 	}
 
-	/* Start timer. */
-  	polybench_start_instruments;
-
 	// Set the arguments of the kernel
 	errcode =  clSetKernelArg(clKernel, 0, sizeof(cl_mem), (void *)&a_mem_obj);
 	errcode |= clSetKernelArg(clKernel, 1, sizeof(cl_mem), (void *)&b_mem_obj);
@@ -235,11 +232,6 @@ void cl_launch_kernel(int start_row, int num_rows, int ni, int nj)
 
 	// Make sure kernel finishes before we continue
 	clFinish(clCommandQue);
-
-	/* Stop and print timer. */
-	printf("GPU Time in seconds:\n");
-  	polybench_stop_instruments;
- 	polybench_print_instruments;
 }
 
 void cl_clean_up()
@@ -339,15 +331,6 @@ int main(int argc, char *argv[])
 	int gpu_end = cpu_start;
 	int gpu_rows = gpu_end - gpu_start;
 
-
-	//int cpu_start = 0;
-	//int cpu_end = (int)(alpha * (ni));
-	//int cpu_rows = cpu_end - cpu_start;
-
-	//int gpu_start = cpu_end;
-	//int gpu_end = ni;
-	//int gpu_rows = gpu_end - gpu_start;
-
 	// Validate work distribution
 	if (gpu_start >= ni && alpha < 1) {
 		printf("Invalid work distribution: gpu_start (%d) >= ni (%d)\n",
@@ -366,18 +349,14 @@ int main(int argc, char *argv[])
 	// Initialize arrays with random data
 	init(ni, nj, POLYBENCH_ARRAY(A));
 
-	// Initialize B_outputFromGpu to known values to avoid garbage data
-	//for (int i = 0; i < ni; i++) {
-	//	for (int j = 0; j < nj; j++) {
-	//		B_outputFromGpu[i][j] = 0.0f;
-	//	}
-	//}
-
 	// Setup OpenCL environment
 	read_cl_file();
 	cl_initialization();
 	cl_mem_init(POLYBENCH_ARRAY(A));
 	cl_load_prog();
+
+	/* Start timer. */
+  	polybench_start_instruments;
 
 	// Execute CPU portion if any rows are assigned to CPU
 	if (cpu_rows > 0) {
@@ -396,7 +375,6 @@ int main(int argc, char *argv[])
 		// Calculate memory sizes in elements, not bytes
 		size_t element_size = sizeof(DATA_TYPE);
 		size_t elements_per_row = NJ;
-		//size_t offset_elements = gpu_start * elements_per_row;
 		size_t offset_elements = 0;
 
 		size_t offset_bytes = offset_elements * element_size;
@@ -430,6 +408,19 @@ int main(int argc, char *argv[])
 		clFinish(clCommandQue);
 	}
 
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
+
+	size_t buffer_size = sizeof(DATA_TYPE) * NI * NJ;
+	size_t args_size = sizeof(int) * 2;
+	size_t total_bytes = buffer_size + args_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
+
 	#ifdef RUN_ON_CPU
 
 		/* Start timer. */
@@ -438,7 +429,7 @@ int main(int argc, char *argv[])
 		conv2D(ni, nj, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
   		polybench_stop_instruments;
  		polybench_print_instruments;
 

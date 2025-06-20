@@ -203,9 +203,6 @@ void cl_launch_kernel(int n, int gpu_rows)
 	globalWorkSize[0] = (size_t)ceil(((float)gpu_rows) / ((float)DIM_LOCAL_WORK_GROUP_X)) * DIM_LOCAL_WORK_GROUP_X;
 	globalWorkSize[1] = 1;
 
-	/* Start timer. */
-  	polybench_start_instruments;
-
 	// Set the arguments of the kernel
 	errcode =  clSetKernelArg(clKernel1, 0, sizeof(cl_mem), (void *)&a_mem_obj);
 	errcode |= clSetKernelArg(clKernel1, 1, sizeof(cl_mem), (void *)&x1_mem_obj);
@@ -229,11 +226,6 @@ void cl_launch_kernel(int n, int gpu_rows)
 	if(errcode != CL_SUCCESS) printf("Error in launching kernel\n");
 
 	clFinish(clCommandQue);
-
-	/* Stop and print timer. */
-	printf("GPU Time in seconds:\n");
-  	polybench_stop_instruments;
- 	polybench_print_instruments;
 }
 
 
@@ -365,20 +357,36 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(a), POLYBENCH_ARRAY(x1), POLYBENCH_ARRAY(x2), POLYBENCH_ARRAY(y_1), POLYBENCH_ARRAY(y_2));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
+
 	if (cpu_rows > 0) {
-		printf("Running CPU computation for rows %d to %d...\n", cpu_start, cpu_end);
 		runMvt_partial(n, cpu_start, cpu_end, POLYBENCH_ARRAY(a), POLYBENCH_ARRAY(x1_outputFromGpu), POLYBENCH_ARRAY(x2_outputFromGpu), POLYBENCH_ARRAY(y_1), POLYBENCH_ARRAY(y_2));
 	}
 
 	if (gpu_rows > 0) {
-		printf("Running GPU computation for rows %d to %d...\n", gpu_start, gpu_end);
-
 		cl_launch_kernel(n, gpu_rows);
 
 		errcode = clEnqueueReadBuffer(clCommandQue, x1_mem_obj, CL_TRUE, 0, gpu_rows*sizeof(DATA_TYPE), POLYBENCH_ARRAY(x1_outputFromGpu), 0, NULL, NULL);
 		errcode = clEnqueueReadBuffer(clCommandQue, x2_mem_obj, CL_TRUE, 0, gpu_rows*sizeof(DATA_TYPE), POLYBENCH_ARRAY(x2_outputFromGpu), 0, NULL, NULL);
 		if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
 	}
+
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
+
+	size_t a_size = sizeof(DATA_TYPE) * N * N;
+	size_t other_size = sizeof(DATA_TYPE) * N * 4;
+	size_t buffer_size = a_size + other_size;
+	size_t arg_size = sizeof(int);
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes); 
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_X * DIM_LOCAL_WORK_GROUP_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 
@@ -388,7 +396,7 @@ int main(int argc, char *argv[])
 		runMvt(n, POLYBENCH_ARRAY(a), POLYBENCH_ARRAY(x1), POLYBENCH_ARRAY(x2), POLYBENCH_ARRAY(y_1), POLYBENCH_ARRAY(y_2));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

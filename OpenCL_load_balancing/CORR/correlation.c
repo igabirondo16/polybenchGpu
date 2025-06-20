@@ -715,12 +715,26 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(data), POLYBENCH_ARRAY(mean), POLYBENCH_ARRAY(stddev), POLYBENCH_ARRAY(symmat_outputFromGpu));
 	cl_load_prog();
 
+	/* Start timer. */
+  	polybench_start_instruments;
 	correlation_collab(cpu_start, cpu_end, gpu_rows, m, n, POLYBENCH_ARRAY(data), POLYBENCH_ARRAY(mean), POLYBENCH_ARRAY(stddev), POLYBENCH_ARRAY(symmat_outputFromGpu));
 
-	//cl_launch_kernel(m, n);
-//
-	//errcode = clEnqueueReadBuffer(clCommandQue, symmat_mem_obj, CL_TRUE, 0, M * N * sizeof(DATA_TYPE), POLYBENCH_ARRAY(symmat_outputFromGpu), 0, NULL, NULL);
-	//if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+  	polybench_stop_instruments;
+ 	polybench_print_instruments;
+
+	size_t data_symmat_size = 2 * sizeof(DATA_TYPE) * M * N;
+	size_t mean_stddev_size = 2 * sizeof(DATA_TYPE) * M;
+	size_t buffer_size = data_symmat_size + mean_stddev_size;
+
+	size_t arg_size = sizeof(DATA_TYPE) * 2 + sizeof(int) * 2;
+
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_KERNEL_1_X * DIM_LOCAL_WORK_GROUP_KERNEL_1_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 
@@ -731,7 +745,7 @@ int main(int argc, char *argv[])
 		correlation(m, n, POLYBENCH_ARRAY(data), POLYBENCH_ARRAY(mean), POLYBENCH_ARRAY(stddev), POLYBENCH_ARRAY(symmat));
 	
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 

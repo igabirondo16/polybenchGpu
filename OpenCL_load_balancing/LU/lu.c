@@ -333,12 +333,9 @@ int main(int argc, char *argv[])
 	cl_mem_init(POLYBENCH_ARRAY(A));
 	cl_load_prog();
 
+	/* Start timer. */
+	polybench_start_instruments;
 	if (gpu_rows > 0) {
-		printf("Running GPU computation for rows %d to %d...\n", gpu_start, gpu_end);
-
-		/* Start timer. */
-		polybench_start_instruments;
-
 		int k;
 		for (k = gpu_start; k < gpu_end; k++)
 		{
@@ -346,19 +343,26 @@ int main(int argc, char *argv[])
 			cl_launch_kernel2(k, n, gpu_end);
 		}
 
-		/* Stop and print timer. */
-		printf("GPU Time in seconds:\n");
-		polybench_stop_instruments;
-		polybench_print_instruments;
-
 		errcode = clEnqueueReadBuffer(clCommandQue, a_mem_obj, CL_TRUE, 0, N*N*sizeof(DATA_TYPE), POLYBENCH_ARRAY(A_outputFromGpu), 0, NULL, NULL);
 		if(errcode != CL_SUCCESS) printf("Error in reading GPU mem\n");
 	}
 
 	if (cpu_rows > 0) {
-		printf("Running CPU computation for rows %d to %d...\n", cpu_start, cpu_end);
 		lu_partial(n, cpu_start, cpu_end, POLYBENCH_ARRAY(A_outputFromGpu));
 	}
+
+	/* Stop and print timer. */
+	printf("\nCPU-GPU Time in seconds: ");
+	polybench_stop_instruments;
+	polybench_print_instruments;
+
+	size_t buffer_size = N*N*sizeof(DATA_TYPE);
+	size_t arg_size = 2 * sizeof(int);
+	size_t total_bytes = buffer_size + arg_size;
+	printf("Total bytes: %ld\n", total_bytes);
+
+	size_t wg_size = DIM_LOCAL_WORK_GROUP_KERNEL_1_X * DIM_LOCAL_WORK_GROUP_KERNEL_1_Y;
+	printf("Work group size: %ld\n", wg_size);
 
 	#ifdef RUN_ON_CPU
 
@@ -368,7 +372,7 @@ int main(int argc, char *argv[])
 		lu(n, POLYBENCH_ARRAY(A));
 
 		/* Stop and print timer. */
-		printf("CPU Time in seconds:\n");
+		printf("CPU Time in seconds: ");
 	  	polybench_stop_instruments;
 	 	polybench_print_instruments;
 
